@@ -1,6 +1,6 @@
 import { Events } from 'discord.js';
 
-const regex = /(?<BookName>(?:[1-3]\s?)?[A-Za-z]+\.?)\s?(?<ChaptersAndVerses>(?:(?:(?:;\s?)?\d+:)?\d+(?:(?:(?:,\s?|-)\d+)*))+)/gm;
+const regex = /(?<BookName>(?:(?<=\s)[1-3]\s?)?[A-Za-z]+\.?)\s?(?<ChaptersAndVerses>(?:(?:(?:;\s?)?\d+:)?\d+(?:(?:(?:,\s?|-)\d+)*))+)/gm;
 
 function extractBibleVerses(message) {
   let match;
