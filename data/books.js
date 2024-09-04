@@ -213,6 +213,7 @@ export default [
     urlKey: 'psalms',
     abbreviations: [
       'psalms',
+      'psalm',
       'ps',
     ],
     bookIndex: 19,
