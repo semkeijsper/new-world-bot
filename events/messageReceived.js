@@ -1,5 +1,5 @@
 /* eslint-disable import/no-extraneous-dependencies */
-import { Events } from 'discord.js';
+import { Events, EmbedBuilder } from 'discord.js';
 import axios from 'axios';
 import { JSDOM } from 'jsdom';
 
@@ -15,6 +15,13 @@ function findBook(bookName) {
 
 function getJwApiCode(bookIndex, chapter, verse) {
   return bookIndex.toString().padStart(2, '0') + chapter.toString().padStart(3, '0') + verse.toString().padStart(3, '0');
+}
+
+function createEmbed(citation, verseText) {
+  return new EmbedBuilder()
+    .setColor(0x4A6DA7) // jw.org blue
+    .setTitle(citation)
+    .setDescription(verseText);
 }
 
 async function lookupVerses(message, book, chaptersAndVerses) {
@@ -40,7 +47,8 @@ async function lookupVerses(message, book, chaptersAndVerses) {
     previousChapter = Math.max(chapterStart, chapterEnd);
 
     if (previousChapter <= book.chapterCount
-      && chapterStart <= chapterEnd && verseStart <= verseEnd) {
+      && chapterStart <= chapterEnd
+      && (verseStart <= verseEnd || (verseStart > verseEnd && chapterStart < chapterEnd))) {
       let codeString = getJwApiCode(book.bookIndex, chapterStart, verseStart);
 
       if (chapterStart !== chapterEnd || verseStart !== verseEnd) {
@@ -63,6 +71,7 @@ async function lookupVerses(message, book, chaptersAndVerses) {
 
   let response;
   try {
+    console.log(`Looking up ${book.name} ${chaptersAndVerses} for ${message.author.displayName}...`);
     response = await axios.get(`https://www.jw.org/en/library/bible/study-bible/books/json/html/${allCodes.join(',')}`, { headers });
   } catch (err) {
     console.error(err);
@@ -73,16 +82,23 @@ async function lookupVerses(message, book, chaptersAndVerses) {
     return;
   }
 
-  const { editionData, ranges } = response.data;
+  const { ranges } = response.data;
 
   Object.values(ranges).forEach((range) => {
-    const citation = range.citation.replaceAll('&nbsp;', '\xa0');
-    let verseText = JSDOM.fragment(range.html).textContent;
+    const citation = range.citation
+      .replaceAll('&nbsp;', '\xa0')
+      .replaceAll('–', '-');
+    const html = range.html.replaceAll('<span class="newblock"></span>', ' ')
+      .replaceAll(/<sup class="superscription">([\s\S]*?)<\/sup>/gm, ' _$1_')
+      .replaceAll(/<span class="chapterNum">([\s\S]*?)<\/span>/gm, '1 ');
+    let verseText = JSDOM.fragment(html).textContent;
     verseText = verseText.replaceAll(/[+*]/g, '');
-    verseText = verseText.replaceAll(/(?:\n\n)?(\d+)\s\s/g, ' <$1> ').trim();
+    verseText = verseText.replaceAll(/(?:\n+\s?)?(\d+)\s\s/g, ' <**$1**> ');
+    verseText = verseText.replaceAll('\n', '').trim();
     const messageToSend = `${citation}\n${verseText}`;
     if (messageToSend.length <= 2000) {
-      message.channel.send(`${citation}\n${verseText}`);
+      const embed = createEmbed(citation, verseText);
+      message.channel.send({ embeds: [embed] });
     }
   });
 }
@@ -117,7 +133,7 @@ function extractBibleVerses(message) {
 export default {
   name: Events.MessageCreate,
   execute(client, message) {
-    if (message.author === client.user) {
+    if (message.author === client.user || message.author.bot) {
       return;
     }
 
