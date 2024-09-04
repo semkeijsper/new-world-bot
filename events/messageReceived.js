@@ -55,7 +55,8 @@ async function lookupVerses(message, book, chaptersAndVerses) {
         codeString += `-${getJwApiCode(book.bookIndex, chapterEnd, verseEnd)}`;
         allCodes.push(codeString);
       } else if (allCodes.length > 0 && verseStart - 1 === previousVerse) {
-        allCodes[allCodes.length - 1] = `${allCodes[allCodes.length - 1].substring(0, 8)}-${codeString}`;
+        const index = allCodes.length - 1;
+        allCodes[index] = `${allCodes[index].substring(0, 8)}-${codeString}`;
       } else {
         allCodes.push(codeString);
       }
@@ -85,20 +86,31 @@ async function lookupVerses(message, book, chaptersAndVerses) {
   const { ranges } = response.data;
 
   Object.values(ranges).forEach((range) => {
+    // add non-breaking space and use normal hyphen to the citation
     const citation = range.citation
       .replaceAll('&nbsp;', '\xa0')
       .replaceAll('–', '-');
-    const html = range.html.replaceAll('<span class="newblock"></span>', ' ')
+
+    // clean up the HTML pre-formatting
+    const html = range.html
+      .replaceAll('<span class="newblock"></span>', ' ')
       .replaceAll(/<sup class="superscription">([\s\S]*?)<\/sup>/gm, ' _$1_')
       .replaceAll(/<span class="chapterNum">([\s\S]*?)<\/span>/gm, '1 ');
-    let verseText = JSDOM.fragment(html).textContent;
-    verseText = verseText.replaceAll(/[+*]/g, '');
-    verseText = verseText.replaceAll(/(?:\n+\s?)?(\d+)\s\s/g, ' <**$1**> ');
-    verseText = verseText.replaceAll('\n', '').trim();
+
+    // parse the HTML, remove citations and footnote characters, format verse numbers
+    const verseText = JSDOM.fragment(html).textContent
+      .replaceAll(/[+*]/g, '')
+      .replaceAll(/(?:\n+\s?)?(\d+)\s\s/g, ' <**$1**> ')
+      .replaceAll('\n', '').trim();
+
     const messageToSend = `${citation}\n${verseText}`;
     if (messageToSend.length <= 2000) {
       const embed = createEmbed(citation, verseText);
-      message.channel.send({ embeds: [embed] });
+      try {
+        message.channel.send({ embeds: [embed] });
+      } catch (err) {
+        console.error(err);
+      }
     }
   });
 }
@@ -126,8 +138,6 @@ function extractBibleVerses(message) {
       regex.lastIndex = match.index + 1;
     }
   }
-
-  // message.channel.send(JSON.stringify(foundBooks, null, 2));
 }
 
 export default {
