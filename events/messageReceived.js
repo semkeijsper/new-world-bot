@@ -6,9 +6,6 @@ import { JSDOM } from 'jsdom';
 // eslint-disable-next-line import/extensions
 import books from '../data/books.js';
 
-const regex = /(?<BookName>(?:[1-3]\s?)?[A-Za-z]+\.?)\s?(?<ChaptersAndVerses>(?:(?:(?:;\s?|-)?\d+:)?\d+(?:(?:(?:,\s?|-(?!\d+:\d+))\d+)*))+)/gm;
-const verseRegex = /(((?<ChapterStart>\d+):)?(?<VerseStart>\d+)-(?<ChapterEnd>\d+):(?<VerseEnd>\d+)|(?:(?<Chapter>\d+)+:)?(?:(?:(?<RangeStart>\d+)-(?<RangeEnd>\d+))|(?<Verse>\d+)))/gm;
-
 function findBook(bookName) {
   return books.filter((book) => book.abbreviations.includes(bookName))[0];
 }
@@ -30,6 +27,8 @@ async function lookupVerses(message, book, chaptersAndVerses) {
   let previousChapter = 1;
   let previousVerse = 1;
 
+  const verseRegex = /(((?<ChapterStart>\d+):)?(?<VerseStart>\d+)-(?<ChapterEnd>\d+):(?<VerseEnd>\d+)|(?:(?<Chapter>\d+)+:)?(?:(?:(?<RangeStart>\d+)-(?<RangeEnd>\d+))|(?<Verse>\d+)))/gm;
+
   // eslint-disable-next-line no-cond-assign
   while ((match = verseRegex.exec(chaptersAndVerses)) !== null) {
     if (match.index === verseRegex.lastIndex) {
@@ -44,6 +43,11 @@ async function lookupVerses(message, book, chaptersAndVerses) {
     const chapterEnd = parseInt(ChapterEnd || chapterStart, 10);
     const verseStart = parseInt(ChapterStart ? VerseStart : RangeStart || Verse, 10);
     const verseEnd = parseInt(ChapterStart ? VerseEnd : RangeEnd || verseStart, 10);
+
+    if (allCodes.length === 0 && !(ChapterStart || Chapter) && book.chapterCount > 1) {
+      return;
+    }
+
     previousChapter = Math.max(chapterStart, chapterEnd);
 
     if (previousChapter <= book.chapterCount && verseStart <= 176
@@ -122,6 +126,8 @@ async function lookupVerses(message, book, chaptersAndVerses) {
 function extractBibleVerses(message) {
   let match;
   const foundBooks = [];
+
+  const regex = /(?<BookName>(?:[1-3]\s?)?[A-Za-z]+\.?)\s?(?<ChaptersAndVerses>(?:(?:(?:;\s?|-)?\d+:)?\d+(?:(?:(?:,\s?|-(?!\d+:\d+))\d+)*))+)/gm;
 
   // eslint-disable-next-line no-cond-assign
   while ((match = regex.exec(message.content)) !== null) {
