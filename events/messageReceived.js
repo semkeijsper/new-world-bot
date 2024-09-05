@@ -46,7 +46,7 @@ async function lookupVerses(message, book, chaptersAndVerses) {
     const verseEnd = parseInt(ChapterStart ? VerseEnd : RangeEnd || verseStart, 10);
     previousChapter = Math.max(chapterStart, chapterEnd);
 
-    if (previousChapter <= book.chapterCount
+    if (previousChapter <= book.chapterCount && verseStart <= 176
       && chapterStart <= chapterEnd
       && (verseStart <= verseEnd || (verseStart > verseEnd && chapterStart < chapterEnd))) {
       let codeString = getJwApiCode(book.bookIndex, chapterStart, verseStart);
@@ -63,6 +63,10 @@ async function lookupVerses(message, book, chaptersAndVerses) {
 
       previousVerse = Math.max(verseStart, verseEnd);
     }
+  }
+
+  if (allCodes.length === 0) {
+    return;
   }
 
   const headers = {
