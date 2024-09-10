@@ -1,5 +1,5 @@
 /* eslint-disable import/no-extraneous-dependencies */
-import { Events, EmbedBuilder } from 'discord.js';
+import { Events, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 import axios from 'axios';
 import { JSDOM } from 'jsdom';
 
@@ -81,6 +81,7 @@ async function lookupVerses(message, book, chaptersAndVerses) {
   let response;
   try {
     console.log(`Looking up ${book.name} ${chaptersAndVerses} for ${message.author.displayName}...`);
+    message.channel.sendTyping();
     response = await axios.get(`https://www.jw.org/en/library/bible/study-bible/books/json/html/${allCodes.join(',')}`, { headers });
   } catch (err) {
     console.error(err);
@@ -154,6 +155,11 @@ export default {
   name: Events.MessageCreate,
   execute(client, message) {
     if (message.author === client.user || message.author.bot) {
+      return;
+    }
+
+    if (!message.guild.members.me.permissionsIn(message.channel)
+      .has(PermissionFlagsBits.SendMessages)) {
       return;
     }
 
