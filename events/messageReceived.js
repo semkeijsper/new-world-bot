@@ -81,7 +81,7 @@ async function lookupVerses(message, book, chaptersAndVerses) {
   let response;
   try {
     console.log(`Looking up ${book.name} ${chaptersAndVerses} for ${message.author.displayName}...`);
-    message.channel.sendTyping();
+    await message.channel.sendTyping();
     response = await axios.get(`https://www.jw.org/en/library/bible/study-bible/books/json/html/${allCodes.join(',')}`, { headers });
   } catch (err) {
     console.error(err);
@@ -94,7 +94,7 @@ async function lookupVerses(message, book, chaptersAndVerses) {
 
   const { ranges } = response.data;
 
-  Object.values(ranges).forEach((range) => {
+  Object.values(ranges).forEach(async (range) => {
     // add non-breaking space and use normal hyphen to the citation
     const citation = range.citation
       .replaceAll('&nbsp;', '\xa0')
@@ -116,7 +116,7 @@ async function lookupVerses(message, book, chaptersAndVerses) {
     if (messageToSend.length <= 2000) {
       const embed = createEmbed(citation, verseText);
       try {
-        message.channel.send({ embeds: [embed] });
+        await message.channel.send({ embeds: [embed] });
       } catch (err) {
         console.error(err);
       }
@@ -159,7 +159,7 @@ export default {
     }
 
     if (!message.guild.members.me.permissionsIn(message.channel)
-      .has(PermissionFlagsBits.SendMessages)) {
+      .has([PermissionFlagsBits.SendMessages, PermissionFlagsBits.SendMessagesInThreads])) {
       return;
     }
 
