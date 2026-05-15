@@ -1,50 +1,65 @@
-/* eslint-disable import/no-extraneous-dependencies */
-import { Events, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
+import { Events, EmbedBuilder, PermissionFlagsBits, Client, Message } from 'discord.js';
 import axios from 'axios';
 import { JSDOM } from 'jsdom';
 
-// eslint-disable-next-line import/extensions
-import books from '../data/books.js';
+import books, { type Book } from '../data/books.js';
 
 axios.defaults.withCredentials = true;
 
-function findBook(bookName) {
-  return books.filter((book) => book.abbreviations.includes(bookName))[0];
+interface JwRange {
+  citation: string;
+  html: string;
 }
 
-function getJwApiCode(bookIndex, chapter, verse) {
+interface JwApiResponse {
+  ranges: Record<string, JwRange> | null | undefined;
+}
+
+function findBook(bookName: string): Book | undefined {
+  return books.find((book) => book.abbreviations.includes(bookName));
+}
+
+function getJwApiCode(bookIndex: number, chapter: number, verse: number): string {
   return bookIndex.toString().padStart(2, '0') + chapter.toString().padStart(3, '0') + verse.toString().padStart(3, '0');
 }
 
-function createEmbed(citation, verseText) {
+function createEmbed(citation: string, verseText: string): EmbedBuilder {
   return new EmbedBuilder()
-    .setColor(0x4A6DA7) // jw.org blue
+    .setColor(0x4A6DA7)
     .setTitle(citation)
     .setDescription(verseText);
 }
 
-async function lookupVerses(message, book, chaptersAndVerses) {
-  const allCodes = [];
-  let match;
+async function lookupVerses(message: Message<true>, book: Book, chaptersAndVerses: string): Promise<void> {
+  const allCodes: string[] = [];
+  let match: RegExpExecArray | null;
   let previousChapter = 1;
   let previousVerse = 1;
 
   const verseRegex = /(((?<ChapterStart>\d+):)?(?<VerseStart>\d+)-(?<ChapterEnd>\d+):(?<VerseEnd>\d+)|(?:(?<Chapter>\d+)+:)?(?:(?:(?<RangeStart>\d+)-(?<RangeEnd>\d+))|(?<Verse>\d+)))/gm;
 
-  // eslint-disable-next-line no-cond-assign
   while ((match = verseRegex.exec(chaptersAndVerses)) !== null) {
     if (match.index === verseRegex.lastIndex) {
       verseRegex.lastIndex += 1;
     }
 
-    const {
-      ChapterStart, VerseStart, ChapterEnd, VerseEnd, Chapter, RangeStart, RangeEnd, Verse,
-    } = match.groups;
+    const groups = match.groups as {
+      ChapterStart?: string;
+      VerseStart?: string;
+      ChapterEnd?: string;
+      VerseEnd?: string;
+      Chapter?: string;
+      RangeStart?: string;
+      RangeEnd?: string;
+      Verse?: string;
+    };
 
-    const chapterStart = parseInt(ChapterStart || Chapter || previousChapter, 10);
-    const chapterEnd = parseInt(ChapterEnd || chapterStart, 10);
-    const verseStart = parseInt(ChapterStart ? VerseStart : RangeStart || Verse, 10);
-    const verseEnd = parseInt(ChapterStart ? VerseEnd : RangeEnd || verseStart, 10);
+    const { ChapterStart, VerseStart, ChapterEnd, VerseEnd, Chapter, RangeStart, RangeEnd, Verse } = groups;
+
+    const chapterStart = parseInt(ChapterStart ?? Chapter ?? String(previousChapter), 10);
+    const chapterEnd = parseInt(ChapterEnd ?? String(chapterStart), 10);
+    const verseStart = parseInt(ChapterStart ? (VerseStart ?? '1') : (RangeStart ?? Verse ?? '1'), 10);
+    const verseEnd = parseInt(ChapterStart ? (VerseEnd ?? String(verseStart)) : (RangeEnd ?? String(verseStart)), 10);
 
     if (allCodes.length === 0 && !(ChapterStart || Chapter) && book.chapterCount > 1) {
       return;
@@ -98,7 +113,7 @@ async function lookupVerses(message, book, chaptersAndVerses) {
   try {
     console.log(`Looking up ${book.name} ${chaptersAndVerses} for ${message.author.displayName}...`);
     await message.channel.sendTyping();
-    response = await axios.get(`https://www.jw.org/en/library/bible/study-bible/books/json/html/${allCodes.join(',')}`, { headers });
+    response = await axios.get<JwApiResponse>(`https://www.jw.org/en/library/bible/study-bible/books/json/html/${allCodes.join(',')}`, { headers });
   } catch (err) {
     console.error(err);
     return;
@@ -110,28 +125,25 @@ async function lookupVerses(message, book, chaptersAndVerses) {
 
   const { ranges } = response.data;
 
-  if (ranges === undefined || ranges === null) {
+  if (ranges == null) {
     console.log(response);
     return;
   }
 
   Object.values(ranges).forEach(async (range) => {
-    // add non-breaking space and use normal hyphen to the citation
     const citation = range.citation
       .replaceAll('&nbsp;', '\xa0')
       .replaceAll('–', '-');
 
-    // clean up the HTML pre-formatting
     const html = range.html
       .replaceAll('<span class="newblock"></span>', ' ')
       .replaceAll(/<sup class="superscription">([\s\S]*?)<\/sup>/gm, ' _$1_')
       .replaceAll(/<span class="chapterNum">([\s\S]*?)<\/span>/gm, '1 ');
 
-    // parse the HTML, remove citations and footnote characters, format verse numbers
     const verseText = JSDOM.fragment(html).textContent
-      .replaceAll(/[+*]/g, '')
+      ?.replaceAll(/[+*]/g, '')
       .replaceAll(/(?:\n+\s?)?(\d+)\s\s/g, ' <**$1**> ')
-      .replaceAll('\n', '').trim();
+      .replaceAll('\n', '').trim() ?? '';
 
     const messageToSend = `${citation}\n${verseText}`;
     if (messageToSend.length <= 2000) {
@@ -145,27 +157,25 @@ async function lookupVerses(message, book, chaptersAndVerses) {
   });
 }
 
-function extractBibleVerses(message) {
-  let match;
-  const foundBooks = [];
+function extractBibleVerses(message: Message<true>): void {
+  let match: RegExpExecArray | null;
 
   const regex = /(?<BookName>(?:[1-3]\s?)?[A-Za-z]+\.?)\s?(?<ChaptersAndVerses>(?:(?:(?:;\s?|-)?\d+:)?\d+(?:(?:(?:,\s?|-(?!\d+:\d+))\d+)*))+)/gm;
 
-  // eslint-disable-next-line no-cond-assign
   while ((match = regex.exec(message.content)) !== null) {
     const { groups } = match;
+    if (!groups) break;
 
-    const bookName = groups.BookName.replaceAll(/[.\s]/g, '').toLowerCase();
-    const chaptersAndVerses = groups.ChaptersAndVerses;
+    const bookName = groups['BookName'].replaceAll(/[.\s]/g, '').toLowerCase();
+    const chaptersAndVerses = groups['ChaptersAndVerses'];
 
     const foundBook = findBook(bookName);
 
     if (foundBook) {
-      foundBooks.push(`${foundBook.name} ${chaptersAndVerses}`);
       lookupVerses(message, foundBook, chaptersAndVerses);
       regex.lastIndex = match.index + match[0].length;
-    } else if (groups.BookName) {
-      regex.lastIndex = match.index + groups.BookName.length;
+    } else if (groups['BookName']) {
+      regex.lastIndex = match.index + groups['BookName'].length;
     } else {
       regex.lastIndex = match.index + 1;
     }
@@ -174,12 +184,16 @@ function extractBibleVerses(message) {
 
 export default {
   name: Events.MessageCreate,
-  execute(client, message) {
+  execute(client: Client, message: Message): void {
     if (message.author === client.user || message.author.bot) {
       return;
     }
 
-    if (!message.guild.members.me.permissionsIn(message.channel)
+    if (!message.inGuild()) {
+      return;
+    }
+
+    if (!message.guild.members.me?.permissionsIn(message.channel)
       .has([PermissionFlagsBits.SendMessages, PermissionFlagsBits.SendMessagesInThreads])) {
       return;
     }

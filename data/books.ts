@@ -1,4 +1,13 @@
-export default [
+export interface Book {
+  name: string;
+  fullName: string;
+  urlKey: string;
+  abbreviations: string[];
+  bookIndex: number;
+  chapterCount: number;
+}
+
+const books: Book[] = [
   {
     name: 'Genesis',
     fullName: 'The Book of Genesis',
@@ -761,3 +770,5 @@ export default [
     chapterCount: 22,
   },
 ];
+
+export default books;

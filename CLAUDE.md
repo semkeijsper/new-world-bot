@@ -7,14 +7,16 @@ Discord bot that auto-fetches Bible verses from jw.org when cited in Discord mes
 Event-driven Discord.js v14 bot. Stateless — no database, no persistent state.
 
 ```
-index.js                  # Bootstrap: Discord client, dynamic event loader
+index.ts                  # Bootstrap: Discord client, dynamic event loader
 events/
-  messageReceived.js      # Core logic: parse citations → fetch from jw.org → post embeds
+  messageReceived.ts      # Core logic: parse citations → fetch from jw.org → post embeds
 data/
-  books.js                # 66 Bible books with names, abbreviations, chapter counts, jw.org keys
+  books.ts                # 66 Bible books with names, abbreviations, chapter counts, jw.org keys
+tsconfig.json             # NodeNext module resolution, ES2022 target
+eslint.config.js          # ESLint 10 flat config with typescript-eslint
 ```
 
-### Event loader pattern (`index.js`)
+### Event loader pattern (`index.ts`)
 
 Dynamically imports all `.js` files from `events/`. Each event module exports:
 
@@ -34,16 +36,16 @@ export default {
 - **Response**: JSON with HTML verse content; parsed with jsdom
 - **Headers**: Mimics Chrome browser (User-Agent, Cookie, Referer) to avoid blocking
 
-## Key Functions (`messageReceived.js`)
+## Key Functions (`messageReceived.ts`)
 
-| Function | Purpose |
-|---|---|
-| `execute(client, message)` | Entry: filter bots, check permissions, run pipeline |
-| `extractBibleVerses(message)` | Regex parse message content → array of `{book, chapter, verse, endVerse, endChapter}` |
-| `lookupVerses(citations)` | Batch fetch from jw.org API, parse HTML, return verse texts |
-| `findBook(bookName)` | Case-insensitive match against book names and all abbreviations |
-| `getJwApiCode(bookIndex, chapter, verse)` | Convert citation to 9-digit API code |
-| `createEmbed(citation, verseText)` | Build Discord embed (color: `#006fb9`) |
+| Function | Signature | Purpose |
+|---|---|---|
+| `execute` | `(client: Client, message: Message): void` | Entry: filter bots, check guild + permissions, run pipeline |
+| `extractBibleVerses` | `(message: Message<true>): void` | Regex parse message content, dispatch `lookupVerses` per match |
+| `lookupVerses` | `(message: Message<true>, book: Book, chaptersAndVerses: string): Promise<void>` | Batch fetch from jw.org API, parse HTML, send embeds |
+| `findBook` | `(bookName: string): Book \| undefined` | Case-insensitive match against book abbreviations |
+| `getJwApiCode` | `(bookIndex: number, chapter: number, verse: number): string` | Convert citation to 9-digit API code |
+| `createEmbed` | `(citation: string, verseText: string): EmbedBuilder` | Build Discord embed (color: `0x4A6DA7`) |
 
 ## Citation Parsing
 
@@ -76,7 +78,7 @@ Bot checks `SendMessages` + `SendMessagesInThreads` before processing any messag
 ### Run
 
 ```sh
-npm start          # node -r dotenv/config index.js
+npm start          # tsx index.ts (dotenv loaded via import 'dotenv/config' at top of index.ts)
 ```
 
 Requires `.env` with:
@@ -84,23 +86,34 @@ Requires `.env` with:
 DISCORD_TOKEN=your_bot_token_here
 ```
 
+No compilation step. `tsx` executes TypeScript directly.
+
+### Type check
+
+```sh
+npx tsc --noEmit
+```
+
 ### Debug (VS Code)
 
-Launch config in `.vscode/launch.json` — auto-loads `.env`.
+Launch config in `.vscode/launch.json` — uses `tsx` runtime, auto-loads `.env`.
 
 ### Lint
 
 ```sh
-npx eslint .
+npm run lint       # eslint . (ESLint 10 flat config via eslint.config.js)
 ```
 
-Config: Airbnb base style, ECMAScript 2024, Windows line endings (`\r\n`).
+Config: `typescript-eslint` recommended rules, Windows line endings (`\r\n`).
 
 **No test framework installed.** `npm test` is a placeholder.
 
 ## Conventions
 
-- ES modules (`"type": "module"` in package.json) — use `import`/`export`, not `require`
+- TypeScript strict mode enabled; all code must pass `tsc --noEmit`
+- ES modules (`"type": "module"` in package.json, `module: NodeNext` in tsconfig) — use `import`/`export`
+- Import paths use `.js` extension even for `.ts` files (NodeNext resolution — tsx resolves at runtime)
+- `Message<true>` used for guild-only message handlers; `message.inGuild()` type guard narrows at entry
 - `async/await` throughout; no raw `.then()` chains
 - Axios errors caught silently in `lookupVerses` — bot never crashes on bad API response
 - Chapterless book citations (e.g., Obadiah without chapter prefix) skipped when `chapterCount > 1`
@@ -114,3 +127,9 @@ Config: Airbnb base style, ECMAScript 2024, Windows line endings (`\r\n`).
 | `axios` ^1.7.7 | HTTP requests to jw.org |
 | `jsdom` ^25.0.0 | HTML parsing of verse content |
 | `dotenv` ^16.4.5 | Load `.env` into `process.env` |
+| `typescript` ^6.0.3 | Type checker (dev) |
+| `tsx` ^4.22.0 | Run TypeScript directly without compile step (dev + runtime) |
+| `@types/node` ^25.8.0 | Node.js type definitions (dev) |
+| `@types/jsdom` ^28.0.3 | jsdom type definitions (dev) |
+| `typescript-eslint` ^8.59.3 | TypeScript ESLint rules (dev) |
+| `eslint` ^10.3.0 | Linter (dev) |
