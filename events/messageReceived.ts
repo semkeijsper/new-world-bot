@@ -1,26 +1,10 @@
 import { Events, EmbedBuilder, PermissionFlagsBits, Client, Message } from 'discord.js';
-import axios from 'axios';
 import { JSDOM } from 'jsdom';
 
 import books, { type Book } from '../data/books.js';
 
-axios.defaults.withCredentials = true;
-
-interface JwRange {
-  citation: string;
-  html: string;
-}
-
-interface JwApiResponse {
-  ranges: Record<string, JwRange> | null | undefined;
-}
-
 function findBook(bookName: string): Book | undefined {
   return books.find((book) => book.abbreviations.includes(bookName));
-}
-
-function getJwApiCode(bookIndex: number, chapter: number, verse: number): string {
-  return bookIndex.toString().padStart(2, '0') + chapter.toString().padStart(3, '0') + verse.toString().padStart(3, '0');
 }
 
 function createEmbed(citation: string, verseText: string): EmbedBuilder {
@@ -31,10 +15,9 @@ function createEmbed(citation: string, verseText: string): EmbedBuilder {
 }
 
 async function lookupVerses(message: Message<true>, book: Book, chaptersAndVerses: string): Promise<void> {
-  const allCodes: string[] = [];
+  const queryParts: string[] = [];
   let match: RegExpExecArray | null;
   let previousChapter = 1;
-  let previousVerse = 1;
 
   const verseRegex = /(((?<ChapterStart>\d+):)?(?<VerseStart>\d+)-(?<ChapterEnd>\d+):(?<VerseEnd>\d+)|(?:(?<Chapter>\d+)+:)?(?:(?:(?<RangeStart>\d+)-(?<RangeEnd>\d+))|(?<Verse>\d+)))/gm;
 
@@ -61,7 +44,7 @@ async function lookupVerses(message: Message<true>, book: Book, chaptersAndVerse
     const verseStart = parseInt(ChapterStart ? (VerseStart ?? '1') : (RangeStart ?? Verse ?? '1'), 10);
     const verseEnd = parseInt(ChapterStart ? (VerseEnd ?? String(verseStart)) : (RangeEnd ?? String(verseStart)), 10);
 
-    if (allCodes.length === 0 && !(ChapterStart || Chapter) && book.chapterCount > 1) {
+    if (queryParts.length === 0 && !(ChapterStart || Chapter) && book.chapterCount > 1) {
       return;
     }
 
@@ -70,80 +53,72 @@ async function lookupVerses(message: Message<true>, book: Book, chaptersAndVerse
     if (previousChapter <= book.chapterCount && verseStart <= 176
       && chapterStart <= chapterEnd
       && (verseStart <= verseEnd || (verseStart > verseEnd && chapterStart < chapterEnd))) {
-      let codeString = getJwApiCode(book.bookIndex, chapterStart, verseStart);
-
-      if (chapterStart !== chapterEnd || verseStart !== verseEnd) {
-        codeString += `-${getJwApiCode(book.bookIndex, chapterEnd, verseEnd)}`;
-        allCodes.push(codeString);
-      } else if (allCodes.length > 0 && verseStart - 1 === previousVerse) {
-        const index = allCodes.length - 1;
-        allCodes[index] = `${allCodes[index].substring(0, 8)}-${codeString}`;
+      let part: string;
+      if (chapterStart !== chapterEnd) {
+        part = `${chapterStart}:${verseStart}-${chapterEnd}:${verseEnd}`;
+      } else if (verseStart !== verseEnd) {
+        part = `${chapterStart}:${verseStart}-${verseEnd}`;
       } else {
-        allCodes.push(codeString);
+        part = `${chapterStart}:${verseStart}`;
       }
-
-      previousVerse = Math.max(verseStart, verseEnd);
+      queryParts.push(part);
     }
   }
 
-  if (allCodes.length === 0) {
+  if (queryParts.length === 0) {
     return;
   }
 
+  const queryString = `${book.name.toLowerCase()} ${queryParts.join('; ')}`;
+  const url = `https://wol.jw.org/en/wol/l/r1/lp-e?${new URLSearchParams({ q: queryString }).toString()}`;
+
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
-    accept: 'application/json, text/javascript, */*; q=0.01',
-    'accept-language': 'en-NL,en-GB;q=0.9,en-US;q=0.8,en;q=0.7,nl;q=0.6',
-    'cache-control': 'no-cache',
-    pragma: 'no-cache',
-    priority: 'u=1, i',
-    'sec-ch-ua': '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"Windows"',
-    'sec-fetch-dest': 'empty',
-    'sec-fetch-mode': 'cors',
-    'sec-fetch-site': 'same-origin',
-    'x-requested-with': 'XMLHttpRequest',
-    cookie: 'cookieConsent-STRICTLY_NECESSARY=true; cookieConsent-FUNCTIONAL=true; cookieConsent-DIAGNOSTIC=true; cookieConsent-USAGE=true; akacd_rel=1740247020~rv=43~id=c724ee26301e4c9242edd2a90efd3d87; ak_bmsc=50166DFB86CC0C0415AE7CDBCD0FF69B~000000000000000000000000000000~YAAQngcQAnsfUxOVAQAAykOXLhqYgLCPzvMjYn2Z830PcQOpwDcCPafUTX88sGp7F0EoYrk6EGOk/hkM4aBOywtbX+UDfGi1JNc+bGO5UsNOvl+qbvBMaieeoSl/3vnjrauI4+yj1d73IV8xxJwRB8LxS0/0Vr2C4sVNaaan1/AobJq/yN8bC4eTlZGxHPhPllAHznxSTYLopEUQqrvuRAullGczI2jlRc0/hqOvYUh+l7TB4xlu3NPerrv4VBt13GKmJj1SCKn17wvBWvHdvcLhqC+MF2EFQCoD0bZr8iZFUcyyokQ7LD9TbLdSrqVPCBw3dWi4/u98cut1FMDHOmhuOHXyW3e2zELpXPz9oMpCim1a6awQV1teCIi/zJ/fLgBPAuzs; ckLang=E; bm_sv=73A97B2209BC20D88D3942029A3E4EF6~YAAQMzAQYG5As9aUAQAAXfWwLhrsffIaHUZAsBeeb/c76KSR9tu/m+M0vL+/la+QCrPjxM1lCIUgzHldyrmbKoueOG1nNhnwONmthinP5HRoDJefc5MdxgKxQk3KTdj1d00rKf//lmAl/CyB6jgbryAmDsQTqxUuT4p6Ul9mFShZ7KO4KK0uf7nTt4/SKliJuNHxKjRpk7OhqJ/HMoxSTsxWNr97yc0E82vf/ALjyXFW5WLNN/VqJvGGjwdH~1',
-    Referer: 'https://www.jw.org/en/library/series/more-topics/is-truth-important/',
-    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   };
 
-  let response;
+  let html: string;
   try {
     console.log(`Looking up ${book.name} ${chaptersAndVerses} for ${message.author.displayName}...`);
     await message.channel.sendTyping();
-    response = await axios.get<JwApiResponse>(`https://www.jw.org/en/library/bible/study-bible/books/json/html/${allCodes.join(',')}`, { headers });
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      return;
+    }
+    html = await response.text();
   } catch (err) {
     console.error(err);
     return;
   }
 
-  if (response.status !== 200) {
+  const dom = new JSDOM(html);
+  const document = dom.window.document;
+  const resultGroups = document.querySelectorAll('ul.results');
+
+  if (resultGroups.length === 0) {
+    console.log(`No results from wol.jw.org for: ${queryString}`);
     return;
   }
 
-  const { ranges } = response.data;
+  for (const group of resultGroups) {
+    const citation = group.querySelector('.cardLine1.cardLine1Prominent')?.textContent?.trim() ?? '';
 
-  if (ranges == null) {
-    console.log(response);
-    return;
-  }
+    const article = group.querySelector('article.scalableui');
+    if (!article) continue;
 
-  Object.values(ranges).forEach(async (range) => {
-    const citation = range.citation
-      .replaceAll('&nbsp;', '\xa0')
-      .replaceAll('–', '-');
+    Array.from(article.querySelectorAll('a.fn, a.b')).forEach((el) => el.remove());
 
-    const html = range.html
-      .replaceAll('<span class="newblock"></span>', ' ')
-      .replaceAll(/<sup class="superscription">([\s\S]*?)<\/sup>/gm, ' _$1_')
-      .replaceAll(/<span class="chapterNum">([\s\S]*?)<\/span>/gm, '1 ');
+    Array.from(article.querySelectorAll('a.vx.vp')).forEach((el) => {
+      const num = el.textContent?.trim() ?? '';
+      el.replaceWith(` **${num}** `);
+    });
 
-    const verseText = JSDOM.fragment(html).textContent
-      ?.replaceAll(/[+*]/g, '')
-      .replaceAll(/(?:\n+\s?)?(\d+)\s\s/g, ' <**$1**> ')
-      .replaceAll('\n', '').trim() ?? '';
+    const verseText = article.textContent
+      ?.replaceAll('\n', ' ')
+      .replaceAll(/\s{2,}/g, ' ')
+      .trim() ?? '';
+
+    if (!citation || !verseText) continue;
 
     const messageToSend = `${citation}\n${verseText}`;
     if (messageToSend.length <= 2000) {
@@ -154,7 +129,7 @@ async function lookupVerses(message: Message<true>, book: Book, chaptersAndVerse
         console.error(err);
       }
     }
-  });
+  }
 }
 
 function extractBibleVerses(message: Message<true>): void {
