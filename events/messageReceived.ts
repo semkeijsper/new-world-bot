@@ -14,7 +14,7 @@ function createEmbed(citation: string, verseText: string): EmbedBuilder {
     .setDescription(verseText);
 }
 
-async function lookupVerses(message: Message<true>, book: Book, chaptersAndVerses: string): Promise<void> {
+function buildQueryParts(book: Book, chaptersAndVerses: string): string[] {
   const queryParts: string[] = [];
   let match: RegExpExecArray | null;
   let previousChapter = 1;
@@ -45,7 +45,7 @@ async function lookupVerses(message: Message<true>, book: Book, chaptersAndVerse
     const verseEnd = parseInt(ChapterStart ? (VerseEnd ?? String(verseStart)) : (RangeEnd ?? String(verseStart)), 10);
 
     if (queryParts.length === 0 && !(ChapterStart || Chapter) && book.chapterCount > 1) {
-      return;
+      return [];
     }
 
     previousChapter = Math.max(chapterStart, chapterEnd);
@@ -65,11 +65,10 @@ async function lookupVerses(message: Message<true>, book: Book, chaptersAndVerse
     }
   }
 
-  if (queryParts.length === 0) {
-    return;
-  }
+  return queryParts;
+}
 
-  const queryString = `${book.name.toLowerCase()} ${queryParts.join('; ')}`;
+async function fetchAndSendVerses(message: Message<true>, queryString: string): Promise<void> {
   const url = `https://wol.jw.org/en/wol/l/r1/lp-e?${new URLSearchParams({ q: queryString }).toString()}`;
 
   const headers = {
@@ -79,7 +78,7 @@ async function lookupVerses(message: Message<true>, book: Book, chaptersAndVerse
 
   let html: string;
   try {
-    console.log(`Looking up ${book.name} ${chaptersAndVerses} for ${message.author.displayName}...`);
+    console.log(`Looking up "${queryString}" for ${message.author.displayName}...`);
     await message.channel.sendTyping();
     const response = await fetch(url, { headers });
     if (!response.ok) {
@@ -120,9 +119,9 @@ async function lookupVerses(message: Message<true>, book: Book, chaptersAndVerse
 
     if (!citation || !verseText) continue;
 
-    const messageToSend = `${citation}\n${verseText}`;
-    if (messageToSend.length <= 2000) {
-      const embed = createEmbed(citation, verseText);
+    if (citation.length <= 256) {
+      const truncated = verseText.length > 4096 ? `${verseText.slice(0, 4093)}...` : verseText;
+      const embed = createEmbed(citation, truncated);
       try {
         await message.channel.send({ embeds: [embed] });
       } catch (err) {
@@ -134,6 +133,7 @@ async function lookupVerses(message: Message<true>, book: Book, chaptersAndVerse
 
 function extractBibleVerses(message: Message<true>): void {
   let match: RegExpExecArray | null;
+  const bookQueries: string[] = [];
 
   const regex = /(?<BookName>(?:[1-3]\s?)?[A-Za-z]+\.?)\s?(?<ChaptersAndVerses>(?:(?:(?:;\s?|-)?\d+:)?\d+(?:(?:(?:,\s?|-(?!\d+:\d+))\d+)*))+)/gm;
 
@@ -147,13 +147,19 @@ function extractBibleVerses(message: Message<true>): void {
     const foundBook = findBook(bookName);
 
     if (foundBook) {
-      lookupVerses(message, foundBook, chaptersAndVerses);
+      if (buildQueryParts(foundBook, chaptersAndVerses).length > 0) {
+        bookQueries.push(`${foundBook.name.toLowerCase()} ${chaptersAndVerses}`);
+      }
       regex.lastIndex = match.index + match[0].length;
     } else if (groups['BookName']) {
       regex.lastIndex = match.index + groups['BookName'].length;
     } else {
       regex.lastIndex = match.index + 1;
     }
+  }
+
+  if (bookQueries.length > 0) {
+    fetchAndSendVerses(message, bookQueries.join('; '));
   }
 }
 
