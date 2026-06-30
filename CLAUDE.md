@@ -9,7 +9,7 @@ Event-driven Discord.js v14 bot. Stateless — no database, no persistent state.
 ```
 index.ts                  # Bootstrap: Discord client, dynamic event loader
 events/
-  messageReceived.ts      # Core logic: parse citations → fetch from jw.org → post embeds
+  messageReceived.ts      # Core logic: parse citations → fetch from wol.jw.org → post embeds
 data/
   books.ts                # 66 Bible books with names, abbreviations, chapter counts, jw.org keys
 tsconfig.json             # NodeNext module resolution, ES2022 target
@@ -18,7 +18,7 @@ eslint.config.js          # ESLint 10 flat config with typescript-eslint
 
 ### Event loader pattern (`index.ts`)
 
-Dynamically imports all `.js` files from `events/`. Each event module exports:
+Dynamically imports all `.ts` files from `events/`. Each event module exports:
 
 ```js
 export default {
@@ -30,21 +30,21 @@ export default {
 
 ### External API
 
-- **Endpoint**: `https://www.jw.org/en/library/bible/study-bible/books/json/html/{codes}`
-- **Code format**: 9-digit string — `{bookIndex:02d}{chapter:03d}{verse:03d}` (e.g., `010001001` = Genesis 1:1)
-- **Multiple verses**: Comma-separated codes in one request
-- **Response**: JSON with HTML verse content; parsed with jsdom
-- **Headers**: Mimics Chrome browser (User-Agent, Cookie, Referer) to avoid blocking
+- **Endpoint**: `https://wol.jw.org/en/wol/l/r1/lp-e?q={queryString}`
+- **Query format**: `book chapter:verse` strings joined by `; ` (e.g., `genesis 1:1; john 3:16`)
+- **Multiple verses**: Single request with semicolon-separated queries
+- **Response**: HTML page; parsed with jsdom
+- **Headers**: `User-Agent` (Chrome) + `Accept` to avoid blocking
 
 ## Key Functions (`messageReceived.ts`)
 
 | Function | Signature | Purpose |
 |---|---|---|
 | `execute` | `(client: Client, message: Message): void` | Entry: filter bots, check guild + permissions, run pipeline |
-| `extractBibleVerses` | `(message: Message<true>): void` | Regex parse message content, dispatch `lookupVerses` per match |
-| `lookupVerses` | `(message: Message<true>, book: Book, chaptersAndVerses: string): Promise<void>` | Batch fetch from jw.org API, parse HTML, send embeds |
+| `extractBibleVerses` | `(message: Message<true>): void` | Regex parse message content, build query strings, call `fetchAndSendVerses` |
+| `buildQueryParts` | `(book: Book, chaptersAndVerses: string): string[]` | Parse verse range string into normalized `chapter:verse` parts |
+| `fetchAndSendVerses` | `(message: Message<true>, queryString: string): Promise<void>` | Fetch from wol.jw.org, parse HTML, send embeds |
 | `findBook` | `(bookName: string): Book \| undefined` | Case-insensitive match against book abbreviations |
-| `getJwApiCode` | `(bookIndex: number, chapter: number, verse: number): string` | Convert citation to 9-digit API code |
 | `createEmbed` | `(citation: string, verseText: string): EmbedBuilder` | Build Discord embed (color: `0x4A6DA7`) |
 
 ## Citation Parsing
@@ -61,13 +61,12 @@ Books matched against full names + all abbreviations in `books.js`. Case-insensi
 
 ## Verse Text Processing
 
-1. Axios fetches JSON from jw.org
-2. jsdom parses HTML fragment
-3. Citation spans stripped (`.b` class)
-4. Footnote markers stripped
-5. Non-breaking spaces (` `) → regular spaces
-6. Verse numbers formatted as `**{n}**`
-7. Discord 2000-char limit enforced per embed
+1. `fetch` gets HTML page from wol.jw.org
+2. jsdom parses full HTML document
+3. Footnote links + citation links (`a.fn`, `a.b`) removed
+4. Verse number links (`a.vx.vp`) replaced with ` **{n}** `
+5. Newlines collapsed, whitespace normalized
+6. 4096-char limit enforced per embed description; title capped at 256
 
 ## Permissions
 
@@ -115,7 +114,7 @@ Config: `typescript-eslint` recommended rules, Windows line endings (`\r\n`).
 - Import paths use `.js` extension even for `.ts` files (NodeNext resolution — tsx resolves at runtime)
 - `Message<true>` used for guild-only message handlers; `message.inGuild()` type guard narrows at entry
 - `async/await` throughout; no raw `.then()` chains
-- Axios errors caught silently in `lookupVerses` — bot never crashes on bad API response
+- Fetch errors caught silently in `fetchAndSendVerses` — bot never crashes on bad API response
 - Chapterless book citations (e.g., Obadiah without chapter prefix) skipped when `chapterCount > 1`
 - No rate limiting implemented — rely on browser header mimicry
 
@@ -124,7 +123,6 @@ Config: `typescript-eslint` recommended rules, Windows line endings (`\r\n`).
 | Package | Use |
 |---|---|
 | `discord.js` ^14.16.1 | Discord API client |
-| `axios` ^1.7.7 | HTTP requests to jw.org |
 | `jsdom` ^25.0.0 | HTML parsing of verse content |
 | `dotenv` ^16.4.5 | Load `.env` into `process.env` |
 | `typescript` ^6.0.3 | Type checker (dev) |
