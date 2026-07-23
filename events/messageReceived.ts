@@ -3,7 +3,7 @@ import { JSDOM } from 'jsdom';
 
 import books, { type Book } from '../data/books.js';
 
-function findBook(bookName: string): Book | undefined {
+export function findBook(bookName: string): Book | undefined {
   return books.find((book) => book.abbreviations.includes(bookName));
 }
 
@@ -14,7 +14,7 @@ function createEmbed(citation: string, verseText: string): EmbedBuilder {
     .setDescription(verseText);
 }
 
-function buildQueryParts(book: Book, chaptersAndVerses: string): string[] {
+export function buildQueryParts(book: Book, chaptersAndVerses: string): string[] {
   const queryParts: string[] = [];
   let match: RegExpExecArray | null;
   let previousChapter = 1;
@@ -131,13 +131,15 @@ async function fetchAndSendVerses(message: Message<true>, queryString: string): 
   }
 }
 
-function extractBibleVerses(message: Message<true>): void {
+export const citationRegex = /(?<BookName>(?:[1-3]\s?)?[A-Za-z]+\.?)\s?(?<ChaptersAndVerses>(?:(?:(?:;\s?|-)?\d+:)?\d+(?:(?:(?:,\s?|-(?!\d+:\d+))\d+)*))+)/gm;
+
+export function parseBibleVerses(content: string): string[] {
   let match: RegExpExecArray | null;
   const bookQueries: string[] = [];
 
-  const regex = /(?<BookName>(?:[1-3]\s?)?[A-Za-z]+\.?)\s?(?<ChaptersAndVerses>(?:(?:(?:;\s?|-)?\d+:)?\d+(?:(?:(?:,\s?|-(?!\d+:\d+))\d+)*))+)/gm;
+  const regex = new RegExp(citationRegex.source, citationRegex.flags);
 
-  while ((match = regex.exec(message.content)) !== null) {
+  while ((match = regex.exec(content)) !== null) {
     const { groups } = match;
     if (!groups) break;
 
@@ -157,6 +159,12 @@ function extractBibleVerses(message: Message<true>): void {
       regex.lastIndex = match.index + 1;
     }
   }
+
+  return bookQueries;
+}
+
+function extractBibleVerses(message: Message<true>): void {
+  const bookQueries = parseBibleVerses(message.content);
 
   if (bookQueries.length > 0) {
     fetchAndSendVerses(message, bookQueries.join('; '));
