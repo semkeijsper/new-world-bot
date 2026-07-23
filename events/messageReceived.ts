@@ -1,6 +1,6 @@
 import { Events, EmbedBuilder, PermissionFlagsBits, Client, Message } from 'discord.js';
-import { JSDOM } from 'jsdom';
 
+import bible from '../data/bible.js';
 import books, { type Book } from '../data/books.js';
 import versification from '../data/versification.js';
 
@@ -78,74 +78,88 @@ export function buildQueryParts(book: Book, chaptersAndVerses: string): string[]
   return queryParts;
 }
 
-async function fetchAndSendVerses(message: Message<true>, queryString: string): Promise<void> {
-  const url = `https://wol.jw.org/en/wol/l/r1/lp-e?${new URLSearchParams({ q: queryString }).toString()}`;
+const MAX_DESCRIPTION = 4096;
+const MAX_TITLE = 256;
 
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-  };
+// Render the verse text for a single normalized part (from buildQueryParts):
+// "c:v", "c:v1-v2", or "c1:v1-c2:v2". Each verse is prefixed with its number
+// as ` **{n}** ` (matching the previous jw.org-sourced formatting). Returns
+// undefined if the part is malformed or any verse is missing from the cache.
+export function renderPart(book: Book, part: string): string | undefined {
+  const match = /^(\d+):(\d+)(?:-(?:(\d+):)?(\d+))?$/.exec(part);
+  if (!match) {
+    return undefined;
+  }
 
-  let html: string;
-  try {
-    console.log(`Looking up "${queryString}" for ${message.author.displayName}...`);
-    await message.channel.sendTyping();
-    const response = await fetch(url, { headers });
-    if (!response.ok) {
-      return;
+  const chapterStart = parseInt(match[1], 10);
+  const verseStart = parseInt(match[2], 10);
+  const chapterEnd = match[3] ? parseInt(match[3], 10) : chapterStart;
+  const verseEnd = match[4] ? parseInt(match[4], 10) : verseStart;
+
+  const chapters = bible[book.bookIndex];
+  if (!chapters) {
+    return undefined;
+  }
+
+  const rendered: string[] = [];
+  for (let chapter = chapterStart; chapter <= chapterEnd; chapter += 1) {
+    const verses = chapters[chapter - 1];
+    if (!verses) {
+      return undefined;
     }
-    html = await response.text();
-  } catch (err) {
-    console.error(err);
-    return;
-  }
-
-  const dom = new JSDOM(html);
-  const document = dom.window.document;
-  const resultGroups = document.querySelectorAll('ul.results');
-
-  if (resultGroups.length === 0) {
-    console.log(`No results from wol.jw.org for: ${queryString}`);
-    return;
-  }
-
-  for (const group of resultGroups) {
-    const citation = group.querySelector('.cardLine1.cardLine1Prominent')?.textContent?.trim() ?? '';
-
-    const article = group.querySelector('article.scalableui');
-    if (!article) continue;
-
-    Array.from(article.querySelectorAll('a.fn, a.b')).forEach((el) => el.remove());
-
-    Array.from(article.querySelectorAll('a.vx.vp')).forEach((el) => {
-      const num = el.textContent?.trim() ?? '';
-      el.replaceWith(` **${num}** `);
-    });
-
-    const verseText = article.textContent
-      ?.replaceAll('\n', ' ')
-      .replaceAll(/\s{2,}/g, ' ')
-      .trim() ?? '';
-
-    if (!citation || !verseText) continue;
-
-    if (citation.length <= 256) {
-      const truncated = verseText.length > 4096 ? `${verseText.slice(0, 4093)}...` : verseText;
-      const embed = createEmbed(citation, truncated);
-      try {
-        await message.channel.send({ embeds: [embed] });
-      } catch (err) {
-        console.error(err);
+    const from = chapter === chapterStart ? verseStart : 1;
+    const to = chapter === chapterEnd ? verseEnd : verses.length;
+    for (let verse = from; verse <= to; verse += 1) {
+      const text = verses[verse - 1];
+      if (text === undefined) {
+        return undefined;
       }
+      if (text === null) {
+        continue; // verse omitted from the NWT running text
+      }
+      rendered.push(`**${verse}** ${text}`);
+    }
+  }
+
+  return rendered.length > 0 ? rendered.join(' ') : undefined;
+}
+
+// Render a full citation (book + raw "chaptersAndVerses") into a single embed's
+// worth of title + description, combining all of its parts.
+export function renderCitation(book: Book, chaptersAndVerses: string): { citation: string; text: string } | undefined {
+  const chunks = buildQueryParts(book, chaptersAndVerses)
+    .map((part) => renderPart(book, part))
+    .filter((chunk): chunk is string => chunk !== undefined);
+
+  if (chunks.length === 0) {
+    return undefined;
+  }
+
+  let text = chunks.join(' ');
+  if (text.length > MAX_DESCRIPTION) {
+    text = `${text.slice(0, MAX_DESCRIPTION - 3)}...`;
+  }
+
+  return { citation: `${book.name} ${chaptersAndVerses}`.trim(), text };
+}
+
+async function sendEmbeds(message: Message<true>, embeds: EmbedBuilder[]): Promise<void> {
+  for (const embed of embeds) {
+    try {
+      await message.channel.send({ embeds: [embed] });
+    } catch (err) {
+      console.error(err);
     }
   }
 }
 
 export const citationRegex = /(?<BookName>(?:[1-3]\s?)?[A-Za-z]+\.?)\s?(?<ChaptersAndVerses>(?:(?:(?:;\s?|,\s?|-)?\d+:)?\d+(?:(?:(?:,\s?|-(?!\d+:\d+))\d+(?!:))*))+)/gm;
 
-export function parseBibleVerses(content: string): string[] {
+// Scan a message for every citation whose book is known and whose verse range
+// is valid, returning the matched book plus its raw "chaptersAndVerses" text.
+export function parseBibleCitations(content: string): { book: Book; chaptersAndVerses: string }[] {
   let match: RegExpExecArray | null;
-  const bookQueries: string[] = [];
+  const citations: { book: Book; chaptersAndVerses: string }[] = [];
 
   const regex = new RegExp(citationRegex.source, citationRegex.flags);
 
@@ -160,7 +174,7 @@ export function parseBibleVerses(content: string): string[] {
 
     if (foundBook) {
       if (buildQueryParts(foundBook, chaptersAndVerses).length > 0) {
-        bookQueries.push(`${foundBook.name.toLowerCase()} ${chaptersAndVerses}`);
+        citations.push({ book: foundBook, chaptersAndVerses });
       }
       regex.lastIndex = match.index + match[0].length;
     } else if (groups['BookName']) {
@@ -170,14 +184,23 @@ export function parseBibleVerses(content: string): string[] {
     }
   }
 
-  return bookQueries;
+  return citations;
+}
+
+export function parseBibleVerses(content: string): string[] {
+  return parseBibleCitations(content)
+    .map(({ book, chaptersAndVerses }) => `${book.name.toLowerCase()} ${chaptersAndVerses}`);
 }
 
 function extractBibleVerses(message: Message<true>): void {
-  const bookQueries = parseBibleVerses(message.content);
+  const embeds = parseBibleCitations(message.content)
+    .map(({ book, chaptersAndVerses }) => renderCitation(book, chaptersAndVerses))
+    .filter((rendered): rendered is { citation: string; text: string } =>
+      rendered !== undefined && rendered.citation.length <= MAX_TITLE)
+    .map(({ citation, text }) => createEmbed(citation, text));
 
-  if (bookQueries.length > 0) {
-    fetchAndSendVerses(message, bookQueries.join('; '));
+  if (embeds.length > 0) {
+    void sendEmbeds(message, embeds);
   }
 }
 

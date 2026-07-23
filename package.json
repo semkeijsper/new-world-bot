@@ -6,7 +6,9 @@
   "scripts": {
     "start": "tsx index.ts",
     "lint": "eslint .",
-    "test": "tsx --test tests/*.test.ts"
+    "test": "tsx --test tests/*.test.ts",
+    "scrape:versification": "tsx scripts/generateVersification.ts",
+    "scrape:bible": "tsx scripts/generateBible.ts"
   },
   "dependencies": {
     "discord.js": "^14.26.4",
