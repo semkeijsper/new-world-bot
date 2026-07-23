@@ -113,9 +113,34 @@ describe('buildQueryParts', () => {
   });
 
   // --- bounds ---
-  it('accepts verse 176 but rejects 177 (max verse guard)', () => {
-    assert.deepEqual(buildQueryParts(ps, '119:176'), ['119:176']);
+  it('validates the verse against the actual NWT chapter length', () => {
+    assert.deepEqual(buildQueryParts(ps, '119:176'), ['119:176']); // Psalm 119 has 176
     assert.deepEqual(buildQueryParts(ps, '119:177'), []);
+    assert.deepEqual(buildQueryParts(gen, '1:31'), ['1:31']);      // Genesis 1 has 31
+    assert.deepEqual(buildQueryParts(gen, '1:32'), []);
+    assert.deepEqual(buildQueryParts(ps, '117:2'), ['117:2']);     // shortest chapter, 2
+    assert.deepEqual(buildQueryParts(ps, '117:3'), []);
+    assert.deepEqual(buildQueryParts(rev, '22:21'), ['22:21']);    // Revelation 22 has 21
+    assert.deepEqual(buildQueryParts(rev, '22:22'), []);
+  });
+
+  it('validates the end verse of a range against its own chapter length', () => {
+    assert.deepEqual(buildQueryParts(rev, '22:1-21'), ['22:1-21']);
+    assert.deepEqual(buildQueryParts(rev, '22:1-22'), []);
+  });
+
+  it('bounds a bare verse for a single-chapter book by its verse count', () => {
+    assert.deepEqual(buildQueryParts(jude, '25'), ['1:25']); // Jude has 25 verses
+    assert.deepEqual(buildQueryParts(jude, '26'), []);
+    assert.deepEqual(buildQueryParts(oba, '21'), ['1:21']);  // Obadiah has 21 verses
+    assert.deepEqual(buildQueryParts(oba, '22'), []);
+  });
+
+  // --- lower bounds ---
+  it('rejects chapter or verse below 1', () => {
+    assert.deepEqual(buildQueryParts(gen, '0:1'), []);
+    assert.deepEqual(buildQueryParts(gen, '1:0'), []);
+    assert.deepEqual(buildQueryParts(gen, '0:0'), []);
   });
 
   it('rejects a chapter beyond the book chapterCount', () => {
@@ -140,11 +165,6 @@ describe('buildQueryParts', () => {
   it('allows a lower end-verse when the end chapter is higher', () => {
     // verseStart > verseEnd is permitted only across ascending chapters
     assert.deepEqual(buildQueryParts(gen, '2:5-3:1'), ['2:5-3:1']);
-  });
-
-  it('does not lower-bound chapter/verse of 0 (documents current behaviour)', () => {
-    assert.deepEqual(buildQueryParts(gen, '0:1'), ['0:1']);
-    assert.deepEqual(buildQueryParts(gen, '1:0'), ['1:0']);
   });
 
   it('returns empty for a fragment with no digits', () => {
@@ -231,35 +251,42 @@ describe('parseBibleVerses — rejected / ignored input', () => {
   t('John 1', []);                             // chapterless, multi-chapter book
   t('Ps 151:1', []);                           // chapter beyond Psalms (150)
   t('Gen 51:1', []);                           // chapter beyond Genesis (50)
-  t('Ps 119:177', []);                         // verse beyond max (176)
+  t('Ps 119:177', []);                         // verse beyond Psalm 119 length
   t('Gen 3:1-2:5', []);                        // descending range
   t('call me at 3:16', []);                    // "at" not a book, no chapter ctx
   t('Version 2:0', []);                        // "Version" not a book
+  t('Gen 0:1', []);                            // chapter below 1
+  t('Gen 1:0', []);                            // verse below 1
+  t('Jude 26', []);                            // verse beyond Jude length (25)
+  t('Gen 1:32', []);                           // verse beyond Genesis 1 length (31)
+});
+
+// Comma-separated chapter:verse groups now parse fully (previously the second
+// group was truncated to a stray chapter number).
+describe('parseBibleVerses — comma-separated chapter groups', () => {
+  const t = (input: string, expected: string[]) =>
+    it(JSON.stringify(input), () => assert.deepEqual(parseBibleVerses(input), expected));
+
+  t('Genesis 1:1-3, 2:4-6', ['genesis 1:1-3, 2:4-6']);
+  t('gen 1:1-2:3, 5:5', ['genesis 1:1-2:3, 5:5']);
+  t('John 3:16, 4:1', ['john 3:16, 4:1']);
+  // Same-chapter verse lists must still work (comma is not a chapter break here).
+  t('Gen 1:1, 3-5', ['genesis 1:1, 3-5']);
+  t('John 3:16,17,18', ['john 3:16,17,18']);
 });
 
 // ---------------------------------------------------------------------------
 // Known quirks — these encode CURRENT behaviour, not necessarily desired.
-// If the extraction regex is fixed, update these expectations.
 // ---------------------------------------------------------------------------
 describe('parseBibleVerses — known quirks (regression guards)', () => {
   const t = (input: string, expected: string[]) =>
     it(JSON.stringify(input), () => assert.deepEqual(parseBibleVerses(input), expected));
 
-  // A second "chapter:verse" group after a comma is truncated to its chapter:
-  // "2:4-6" becomes a stray "2" appended to the first citation.
-  t('Genesis 1:1-3, 2:4-6', ['genesis 1:1-3, 2']);
-  t('gen 1:1-2:3, 5:5', ['genesis 1:1-2:3, 5']);
-
-  // Comma continuation greedily crosses book boundaries: the later
-  // "2 John 1" / "3 John 2" get swallowed as bare numbers on the first book.
+  // Comma continuation across a numbered book is ambiguous with a verse list
+  // (cf. "Gen 1:1, 3 and ..."), so "2 John 1" / "3 John 2" are still swallowed
+  // as a bare number on the first book. Use ';' to separate such citations.
   t('1 John 1:1, 2 John 1, 3 John 2', ['1 john 1:1, 2']);
-
-  // No lower-bound validation — chapter/verse 0 passes extraction.
-  t('Gen 0:1', ['genesis 0:1']);
-  t('Gen 1:0', ['genesis 1:0']);
-
-  // Verse count is only capped at 176; real per-book verse counts are unchecked.
-  t('Jude 26', ['jude 26']); // Jude has 25 verses, still accepted
+  t('1 John 1:1; 2 John 1; 3 John 2', ['1 john 1:1', '2 john 1', '3 john 2']);
 });
 
 // ---------------------------------------------------------------------------
