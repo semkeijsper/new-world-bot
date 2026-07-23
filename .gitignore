@@ -5,3 +5,5 @@ dist
 
 # NWT verse text is downloaded locally (copyright); never commit it.
 data/bible.json
+data/bible.json.tmp
+data/.bible-cache.jsonl
