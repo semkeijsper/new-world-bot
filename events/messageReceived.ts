@@ -2,9 +2,16 @@ import { Events, EmbedBuilder, PermissionFlagsBits, Client, Message } from 'disc
 import { JSDOM } from 'jsdom';
 
 import books, { type Book } from '../data/books.js';
+import versification from '../data/versification.js';
 
 export function findBook(bookName: string): Book | undefined {
   return books.find((book) => book.abbreviations.includes(bookName));
+}
+
+// Highest valid verse number in a given chapter of a book (NWT versification).
+// Falls back to the longest chapter in the Bible if data is unavailable.
+function versesInChapter(book: Book, chapter: number): number {
+  return versification[book.bookIndex]?.[chapter - 1] ?? 176;
 }
 
 function createEmbed(citation: string, verseText: string): EmbedBuilder {
@@ -50,9 +57,12 @@ export function buildQueryParts(book: Book, chaptersAndVerses: string): string[]
 
     previousChapter = Math.max(chapterStart, chapterEnd);
 
-    if (previousChapter <= book.chapterCount && verseStart <= 176
+    if (chapterStart >= 1 && verseStart >= 1 && verseEnd >= 1
       && chapterStart <= chapterEnd
-      && (verseStart <= verseEnd || (verseStart > verseEnd && chapterStart < chapterEnd))) {
+      && chapterEnd <= book.chapterCount
+      && verseStart <= versesInChapter(book, chapterStart)
+      && verseEnd <= versesInChapter(book, chapterEnd)
+      && (verseStart <= verseEnd || chapterStart < chapterEnd)) {
       let part: string;
       if (chapterStart !== chapterEnd) {
         part = `${chapterStart}:${verseStart}-${chapterEnd}:${verseEnd}`;
@@ -131,7 +141,7 @@ async function fetchAndSendVerses(message: Message<true>, queryString: string): 
   }
 }
 
-export const citationRegex = /(?<BookName>(?:[1-3]\s?)?[A-Za-z]+\.?)\s?(?<ChaptersAndVerses>(?:(?:(?:;\s?|-)?\d+:)?\d+(?:(?:(?:,\s?|-(?!\d+:\d+))\d+)*))+)/gm;
+export const citationRegex = /(?<BookName>(?:[1-3]\s?)?[A-Za-z]+\.?)\s?(?<ChaptersAndVerses>(?:(?:(?:;\s?|,\s?|-)?\d+:)?\d+(?:(?:(?:,\s?|-(?!\d+:\d+))\d+(?!:))*))+)/gm;
 
 export function parseBibleVerses(content: string): string[] {
   let match: RegExpExecArray | null;
